@@ -5,6 +5,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import math, logging
 import stepper, chelper
+import Queue
 
 class PrinterExtruder:
     def __init__(self, config, extruder_num):
@@ -45,11 +46,13 @@ class PrinterExtruder:
         pressure_advance = config.getfloat('pressure_advance', 0., minval=0.)
         smooth_time = config.getfloat('pressure_advance_smooth_time',
                                       0.040, above=0., maxval=.200)
+        self.moves = []
         # Setup iterative solver
         ffi_main, ffi_lib = chelper.get_ffi()
         self.trapq = ffi_main.gc(ffi_lib.trapq_alloc(), ffi_lib.trapq_free)
         self.trapq_append = ffi_lib.trapq_append
         self.trapq_free_moves = ffi_lib.trapq_free_moves
+        self.trapq_get_velocity = ffi_lib.trapq_get_velocity
         self.sk_extruder = ffi_main.gc(ffi_lib.extruder_stepper_alloc(),
                                        ffi_lib.free)
         self.stepper.set_stepper_kinematics(self.sk_extruder)
@@ -93,7 +96,8 @@ class PrinterExtruder:
     def get_status(self, eventtime):
         return dict(self.heater.get_status(eventtime),
                     pressure_advance=self.pressure_advance,
-                    smooth_time=self.pressure_advance_smooth_time)
+                    smooth_time=self.pressure_advance_smooth_time,
+                    velocity=self.get_velocity(eventtime))
     def get_name(self):
         return self.name
     def get_heater(self):
@@ -150,6 +154,17 @@ class PrinterExtruder:
                           move.start_pos[3], 0., 0.,
                           1., pressure_advance, 0.,
                           start_v, cruise_v, accel)
+        self.moves.append((print_time,
+            move.accel_t + move.cruise_t + move.decel_t, cruise_v))
+    def get_velocity(self, print_time):
+        for move in self.moves:
+            if(move[0] > print_time): # move is in the future
+                return 0
+            if move[0] + move[1] < print_time:
+                self.moves.remove(move) # move is old
+                continue
+            return move[2]
+        return 0
     def cmd_M104(self, gcmd, wait=False):
         # Set Extruder Temperature
         temp = gcmd.get_float('S', 0.)
