@@ -71,6 +71,7 @@ defs_trapq = """
     struct trapq *trapq_alloc(void);
     void trapq_free(struct trapq *tq);
     void trapq_free_moves(struct trapq *tq, double print_time);
+    double trapq_get_velocity(struct trapq *tq, double print_time);
 """
 
 defs_kin_cartesian = """

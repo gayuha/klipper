@@ -75,6 +75,20 @@ move_get_distance(struct move *m, double move_time)
     return (m->start_v + m->half_accel * move_time) * move_time;
 }
 
+// Return the velocity given a time in a move
+inline double
+move_get_velocity(struct move *m, double move_time)
+{
+    return m->start_v + m->half_accel * move_time * 2;
+}
+
+// Return the average velocity of a move
+inline double
+move_get_average_velocity(struct move *m)
+{
+    return m->start_v + m->half_accel * m->move_t;
+}
+
 // Return the XYZ coordinates given a time in a move
 inline struct coord
 move_get_coord(struct move *m, double move_time)
@@ -173,5 +187,22 @@ trapq_free_moves(struct trapq *tq, double print_time)
             return;
         list_del(&m->node);
         free(m);
+    }
+}
+
+double __visible
+trapq_get_velocity(struct trapq *tq, double print_time){
+    struct move *head_sentinel = list_first_entry(&tq->moves, struct move,node);
+    struct move *tail_sentinel = list_last_entry(&tq->moves, struct move, node);
+    struct move *m = list_prev_entry(tail_sentinel, node);
+    for (;;) {
+        if (m == tail_sentinel || m == head_sentinel) {
+            return 0;
+        }
+        if(m->print_time > print_time){
+            m = list_prev_entry(m, node);
+            continue;
+        }
+        return move_get_average_velocity(m);
     }
 }

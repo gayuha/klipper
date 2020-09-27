@@ -31,11 +31,14 @@ void trapq_append(struct trapq *tq, double print_time
                   , double axes_r_x, double axes_r_y, double axes_r_z
                   , double start_v, double cruise_v, double accel);
 double move_get_distance(struct move *m, double move_time);
+double move_get_velocity(struct move *m, double move_time);
+double move_get_average_velocity(struct move *m);
 struct coord move_get_coord(struct move *m, double move_time);
 struct trapq *trapq_alloc(void);
 void trapq_free(struct trapq *tq);
 void trapq_check_sentinels(struct trapq *tq);
 void trapq_add_move(struct trapq *tq, struct move *m);
 void trapq_free_moves(struct trapq *tq, double print_time);
+double trapq_get_velocity(struct trapq *tq, double print_time);
 
 #endif // trapq.h
