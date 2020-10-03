@@ -3,7 +3,8 @@
 # Copyright (C) 2016-2020  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import logging, threading
+import logging, threading, math
+import numpy as np
 
 
 ######################################################################
@@ -179,6 +180,8 @@ class ControlPID:
         self.Kp = config.getfloat('pid_Kp') / PID_PARAM_BASE
         self.Ki = config.getfloat('pid_Ki') / PID_PARAM_BASE
         self.Kd = config.getfloat('pid_Kd') / PID_PARAM_BASE
+        dead_time = config.getfloat('pid_dead_time', default=0., minval=0.)
+        lookback = config.getfloat('pid_lookback', default=1, above=0.)
         self.min_deriv_time = heater.get_smooth_time()
         imax = config.getfloat('pid_integral_max', self.heater_max_power,
                                minval=0.)
@@ -187,7 +190,12 @@ class ControlPID:
         self.prev_temp_time = 0.
         self.prev_temp_deriv = 0.
         self.prev_temp_integ = 0.
-    def temperature_update(self, read_time, temp, target_temp):
+        self.temp_history = TempHistory(dead_time, lookback)
+    def temperature_update(self, read_time, temp_real, target_temp):
+        self.temp_history.add_temp(read_time, temp_real)
+        # logging.info("read temp: %f", temp_real)
+        temp = self.temp_history.get_interpolated_temp()
+        # logging.info("interpolated temp: %f", temp)
         time_diff = read_time - self.prev_temp_time
         # Calculate change of temperature
         temp_diff = temp - self.prev_temp
@@ -202,14 +210,16 @@ class ControlPID:
         temp_integ = max(0., min(self.temp_integ_max, temp_integ))
         # Calculate output
         co = self.Kp*temp_err + self.Ki*temp_integ - self.Kd*temp_deriv
-        #logging.debug("pid: %f@%.3f -> diff=%f deriv=%f err=%f integ=%f co=%d",
-        #    temp, read_time, temp_diff, temp_deriv, temp_err, temp_integ, co)
+        logging.info("pid: %f@%.3f -> target=%f temp_diff=%f time_diff=%f deriv=%f err=%f integ=%f co=%f",
+           temp, read_time, target_temp, temp_diff, time_diff, temp_deriv, temp_err, temp_integ, co)
+        logging.info("prev_temp_deriv=%f min_deriv_time=%f",
+           self.prev_temp_deriv, self.min_deriv_time)
         bounded_co = max(0., min(self.heater_max_power, co))
         self.heater.set_pwm(read_time, bounded_co)
         # Store state for next measurement
         self.prev_temp = temp
         self.prev_temp_time = read_time
-        self.prev_temp_deriv = temp_deriv
+        self.prev_temp_deriv = temp_deriv if not math.isnan(temp_deriv) else 0
         if co == bounded_co:
             self.prev_temp_integ = temp_integ
     def check_busy(self, eventtime, smoothed_temp, target_temp):
@@ -217,6 +227,47 @@ class ControlPID:
         return (abs(temp_diff) > PID_SETTLE_DELTA
                 or abs(self.prev_temp_deriv) > PID_SETTLE_SLOPE)
 
+
+######################################################################
+# Temperature history
+######################################################################
+
+class TempHistory:
+    def __init__(self, dead_time, lookback):
+        self.times = []
+        self.temps = []
+        self.deadtime = dead_time # seconds
+        self.lookback = lookback # seconds
+
+    def _estimate_coef(self, x, y):
+        x = np.array(x)
+        y = np.array(y)
+        # number of observations/points
+        n = np.size(x)
+
+        # mean of x and y vector
+        m_x, m_y = np.mean(x), np.mean(y)
+
+        # calculating cross-deviation and deviation about x
+        SS_xy = np.sum(y*x) - n*m_y*m_x
+        SS_xx = np.sum(x*x) - n*m_x*m_x
+
+        # calculating regression coefficients
+        b_1 = SS_xy / SS_xx
+        b_0 = m_y - b_1*m_x
+
+        return(b_0, b_1)
+
+    def add_temp(self, read_time, temp):
+        self.times.append(read_time)
+        self.temps.append(temp)
+        if self.times[0] < read_time - self.lookback:
+            del self.times[0]
+            del self.temps[0]
+
+    def get_interpolated_temp(self):
+        coeff = self._estimate_coef(self.times, self.temps)
+        return float(coeff[0] + coeff[1] * (self.times[-1] + self.deadtime))
 
 ######################################################################
 # Sensor and heater lookup
