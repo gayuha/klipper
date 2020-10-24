@@ -86,8 +86,10 @@ class Heater:
             self.last_temp_time = read_time
             extruder_velocity = \
                 self.printer.lookup_object("extruder").get_velocity(read_time)
+            fan_speed = self.printer.lookup_object('fan')\
+                .get_status(read_time)["speed"]
             self.control.temperature_update(read_time, temp, self.target_temp,
-                extruder_velocity)
+                extruder_velocity, fan_speed)
             temp_diff = temp - self.smoothed_temp
             adj_time = min(time_diff * self.inv_smooth_time, 1.)
             self.smoothed_temp += temp_diff * adj_time
@@ -185,6 +187,7 @@ class ControlPID:
         self.Ki = config.getfloat('pid_Ki') / PID_PARAM_BASE
         self.Kd = config.getfloat('pid_Kd') / PID_PARAM_BASE
         self.Kc = config.getfloat('pid_Kc', default = 0.) / PID_PARAM_BASE
+        self.Kf = config.getfloat('pid_Kf', default = 0.) / PID_PARAM_BASE
         self.min_deriv_time = heater.get_smooth_time()
         imax = config.getfloat('pid_integral_max', self.heater_max_power,
                                minval=0.)
@@ -203,9 +206,9 @@ class ControlPID:
         self.prev_temp_integ = 0.
         self.prev_heater_pwm = 0.
     def temperature_update(self, read_time, temp, target_temp, extruder_velocity
-        ):
+        , fan_speed):
         time_diff = read_time - self.prev_temp_time
-        real_temp = temp
+        # real_temp = temp
         temp = self.fopdt_model.interpolateTemp(temp, self.prev_heater_pwm)
         # Calculate change of temperature
         temp_diff = temp - self.prev_temp
@@ -220,11 +223,12 @@ class ControlPID:
         temp_integ = max(0., min(self.temp_integ_max, temp_integ))
         # Calculate output
         co = self.Kp*temp_err + \
-            self.Ki*temp_integ - self.Kd*temp_deriv + self.Kc*extruder_velocity
-        logging.info("pid: %f@%.3f -> real_temp=%f diff=%f deriv=%f err=%f \
-            integ=%f co=%f",
-           temp, read_time, real_temp, temp_diff, temp_deriv, temp_err,
-           temp_integ, co)
+            self.Ki * temp_integ - self.Kd * temp_deriv + \
+            self.Kc * extruder_velocity + self.Kf * fan_speed
+        # logging.debug("pid: %f@%.3f -> real_temp=%f diff=%f deriv=%f err=%f \
+        #     integ=%f co=%f",
+        #    temp, read_time, real_temp, temp_diff, temp_deriv, temp_err,
+        #    temp_integ, co)
         bounded_co = max(0., min(self.heater_max_power, co))
         self.heater.set_pwm(read_time, bounded_co)
         # Store state for next measurement
