@@ -3,7 +3,7 @@
 # Copyright (C) 2016-2020  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import logging, threading
+import math, logging, threading
 
 
 ######################################################################
@@ -186,12 +186,21 @@ class ControlPID:
         self.temp_integ_max = 0.
         if self.Ki:
             self.temp_integ_max = imax / self.Ki
+
+        gain = config.getfloat('gain', default=0., minval=0.)
+        time_constant = config.getfloat('time_constant', default=0., minval=0.)
+        delay = config.getfloat('delay_time', default=0., minval=0.)
+        self.fopdt_model = FOPDTModel(gain, time_constant, delay)
+
         self.prev_temp = AMBIENT_TEMP
         self.prev_temp_time = 0.
         self.prev_temp_deriv = 0.
         self.prev_temp_integ = 0.
+        self.prev_heater_pwm = 0.
     def temperature_update(self, read_time, temp, target_temp):
         time_diff = read_time - self.prev_temp_time
+        real_temp = temp
+        temp = self.fopdt_model.interpolateTemp(temp, self.prev_heater_pwm)
         # Calculate change of temperature
         temp_diff = temp - self.prev_temp
         if time_diff >= self.min_deriv_time:
@@ -205,14 +214,17 @@ class ControlPID:
         temp_integ = max(0., min(self.temp_integ_max, temp_integ))
         # Calculate output
         co = self.Kp*temp_err + self.Ki*temp_integ - self.Kd*temp_deriv
-        #logging.debug("pid: %f@%.3f -> diff=%f deriv=%f err=%f integ=%f co=%d",
-        #    temp, read_time, temp_diff, temp_deriv, temp_err, temp_integ, co)
+        logging.info("pid: %f@%.3f -> real_temp=%f diff=%f deriv=%f err=%f \
+            integ=%f co=%f",
+           temp, read_time, real_temp, temp_diff, temp_deriv, temp_err,
+           temp_integ, co)
         bounded_co = max(0., min(self.heater_max_power, co))
         self.heater.set_pwm(read_time, bounded_co)
         # Store state for next measurement
         self.prev_temp = temp
         self.prev_temp_time = read_time
         self.prev_temp_deriv = temp_deriv
+        self.prev_heater_pwm = bounded_co
         if co == bounded_co:
             self.prev_temp_integ = temp_integ
     def check_busy(self, eventtime, smoothed_temp, target_temp):
@@ -220,6 +232,21 @@ class ControlPID:
         return (abs(temp_diff) > PID_SETTLE_DELTA
                 or abs(self.prev_temp_deriv) > PID_SETTLE_SLOPE)
 
+
+class FOPDTModel:
+    def __init__(self, gain, time_constant, delay):
+        self.gain = gain
+        self.inv_time_constant = 0
+        if time_constant != 0:
+            self.inv_time_constant = 1. / time_constant
+        self.delay = delay
+
+    def interpolateTemp(self, temp, heater_pwm):
+        temp -= AMBIENT_TEMP
+        zir = temp * math.exp(-self.delay * self.inv_time_constant)
+        zsr = self.gain * heater_pwm * \
+            (1 - math.exp(-self.delay * self.inv_time_constant))
+        return zir + zsr + AMBIENT_TEMP
 
 ######################################################################
 # Sensor and heater lookup
