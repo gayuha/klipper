@@ -222,9 +222,9 @@ class ControlPID:
         temp_integ = self.prev_temp_integ + temp_err * time_diff
         temp_integ = max(0., min(self.temp_integ_max, temp_integ))
         # Calculate output
-        co = self.Kp*temp_err + \
-            self.Ki * temp_integ - self.Kd * temp_deriv + \
-            self.Kc * extruder_velocity + self.Kf * fan_speed
+        co1 = self.Kp*temp_err + \
+            self.Ki * temp_integ - self.Kd * temp_deriv
+        co = co1 + self.Kc * extruder_velocity + self.Kf * fan_speed
         # logging.debug("pid: %f@%.3f -> real_temp=%f diff=%f deriv=%f err=%f \
         #     integ=%f co=%f",
         #    temp, read_time, real_temp, temp_diff, temp_deriv, temp_err,
@@ -235,7 +235,7 @@ class ControlPID:
         self.prev_temp = temp
         self.prev_temp_time = read_time
         self.prev_temp_deriv = temp_deriv
-        self.prev_heater_pwm = bounded_co
+        self.prev_heater_pwm = max(0., min(self.heater_max_power, co1))
         if co == bounded_co:
             self.prev_temp_integ = temp_integ
     def check_busy(self, eventtime, smoothed_temp, target_temp):
