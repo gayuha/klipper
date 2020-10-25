@@ -64,7 +64,8 @@ class ControlBumpTest:
             self.pwm_samples.append((read_time + self.heater_pwm_delay, value))
             self.last_pwm = value
         self.heater.set_pwm(read_time, value)
-    def temperature_update(self, read_time, temp, target_temp):
+    def temperature_update(self, read_time, temp, target_temp, extruder_velocity
+        , fan_speed):
         self.temp_samples.append((read_time, temp))
         if self.state == 0:
             self.set_pwm(read_time, 0.)
